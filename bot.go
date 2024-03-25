@@ -1,12 +1,12 @@
 package main
 
 import (
+	"github.com/RocketChat/Rocket.Chat.Go.SDK/models"
+	"github.com/RocketChat/Rocket.Chat.Go.SDK/realtime"
 	"log"
 	"net/url"
 	"strings"
-
-	"github.com/RocketChat/Rocket.Chat.Go.SDK/models"
-	"github.com/RocketChat/Rocket.Chat.Go.SDK/realtime"
+	"time"
 )
 
 // rocket.chat server host info
@@ -26,6 +26,16 @@ var (
 	id           = ""
 	token        = ""
 	tokenExpires = int64(0)
+)
+
+// channel or room info
+var (
+	channelOrRoomId = "GENERAL"
+)
+
+// when someone use ‘@’ mention bot
+var (
+	namePrefix = "@AiBot"
 )
 
 // realtime api = 实时聊天
@@ -52,10 +62,10 @@ func main() {
 	tokenExpires = loginRes.TokenExpires
 
 	var channel = &models.Channel{
-		ID: "GENERAL",
+		ID: channelOrRoomId,
 	}
 
-	var chanMsg = make(chan models.Message)
+	var chanMsg = make(chan models.Message, 1)
 
 	err = client.SubscribeToMessageStream(channel, chanMsg)
 
@@ -63,35 +73,52 @@ func main() {
 		log.Fatalln("订阅消息失败", err)
 	}
 
-	for {
-		select {
-		case msg := <-chanMsg:
-			var m = msg.Msg
-			log.Println("接收到消息:", m)
-
-			if m == "" {
-				continue
+	go func() {
+		for {
+			select {
+			case msg := <-chanMsg:
+				handleMessage(client, msg)
 			}
-
-			if strings.HasPrefix(m, "@AiBot") {
-				msgArr := strings.Split(m, "@AiBot")
-				var realMsg = msgArr[1]
-
-				if realMsg != "" {
-					var msg = &models.Message{
-						RoomID: "GENERAL",
-						Msg:    realMsg + "吗？",
-					}
-					_, err = client.SendMessage(msg)
-					if err != nil {
-						log.Fatalln("消息发送失败", err)
-					}
-					log.Println("消息发送成功")
-				}
-
-			}
-
 		}
-	}
+	}()
 
+	for {
+		time.Sleep(10 * time.Second)
+	}
+}
+
+func handleMessage(client *realtime.Client, msg models.Message) {
+
+	var m = msg.Msg
+
+	if m == "" {
+		return
+	}
+	log.Println("接收到消息:", m)
+
+	if strings.HasPrefix(m, namePrefix) {
+		msgArr := strings.Split(m, namePrefix)
+		var realMsg = msgArr[1]
+
+		if realMsg != "" {
+
+			// send req to ollama local api
+			msgRes, err := SendMessage("qwen:7b", realMsg)
+
+			if err != nil {
+				log.Fatalln("调用Ollama服务失败", err)
+			}
+
+			var msg = &models.Message{
+				RoomID: channelOrRoomId,
+				Msg:    msgRes.Response,
+			}
+			_, err = client.SendMessage(msg)
+			if err != nil {
+				log.Fatalln("消息发送失败", err)
+			}
+			log.Println("消息发送成功")
+		}
+
+	}
 }
